@@ -1,4 +1,8 @@
+use std::{collections::BTreeMap, sync::Arc};
+
 use rustdoc_types::*;
+use trustfall::FieldValue;
+use trustfall_rustdoc_adapter::{IndexedCrate, RustdocAdapter};
 
 /*
 
@@ -18,16 +22,21 @@ if the trait has an associated const of a pub-in-priv type that doesn't have a d
 
 */
 
-pub struct Checker {
-    pub krate: Crate,
+pub struct Checker<'a> {
+    pub krate: &'a Crate,
+    indexed: IndexedCrate<'a>,
     root_crate_id: u32,
 }
 
-impl Checker {
-    pub fn new(krate: Crate) -> Self {
+impl<'a> Checker<'a> {
+    pub fn new(krate: &'a Crate) -> Self {
         let root_crate_id = krate.index[&krate.root].crate_id;
+
+        let indexed = IndexedCrate::new(&krate);
+
         Self {
             krate,
+            indexed,
             root_crate_id,
         }
     }
@@ -67,8 +76,46 @@ impl Checker {
     }
 
     fn is_pub_in_priv(&self, id: &Id) -> bool {
-        // Pretend we can impl this later.
-        false
+        // TODO: Maybe just do this ourself, instead of with trustfall
+        // Alternativly: expose rustc EffectiveVisibilities
+
+        let is_pub = self.krate.index[id].visibility == Visibility::Public;
+
+        if !is_pub {
+            return false;
+        }
+
+        let schema = RustdocAdapter::schema();
+        let adapter = Arc::new(RustdocAdapter::new(&self.indexed, None));
+
+        let has_importable_path = trustfall::execute_query(
+            &schema,
+            adapter,
+            r###"
+        query {
+            Crate {
+              item {
+                ... on Trait {
+                  id @filter(op: "=", value: ["$id"])
+          
+                  importable_path @fold @transform(op: "count") @filter(op: ">", value: ["$zero"])
+                }
+              }
+            }
+          }
+          
+
+        "###,
+            BTreeMap::<&str, FieldValue>::from_iter([
+                ("id", id.0.as_str().into()),
+                ("zero", 0.into()),
+            ]),
+        )
+        .unwrap()
+        .next()
+        .is_some();
+
+        !has_importable_path
     }
 
     fn is_other_crate(&self, id: &Id) -> bool {

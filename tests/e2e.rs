@@ -19,14 +19,24 @@ fn id_in_root<'a>(checker: &'a Checker, name: &str) -> &'a Id {
 #[test]
 fn simple_public() {
     let checker = checker_for("simple_public");
-
-    assert!(!checker.is_sealed(id_in_root(&checker, "Public")));
+    assert!(!is_sealed(&checker, "Public"));
 }
 
-fn checker_for(arg: &str) -> is_sealed_trait::Checker {
+#[test]
+fn pub_in_priv_supertrait() {
+    let checker = checker_for("pub_in_priv_supertrait");
+    assert!(is_sealed(&checker, "Sealed"));
+}
+
+fn checker_for(arg: &str) -> is_sealed_trait::Checker<'static> {
     let json = std::fs::read_to_string(Path::new("tests/corpus").join(arg).with_extension("json"))
         .unwrap();
     let krate = serde_json::from_str(&json).unwrap();
 
-    Checker::new(krate)
+    let b = Box::new(krate);
+    Checker::new(Box::leak(b))
+}
+
+fn is_sealed(checker: &Checker, name: &str) -> bool {
+    checker.is_sealed(id_in_root(checker, name))
 }
